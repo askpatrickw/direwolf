@@ -1,0 +1,156 @@
+name: 'Release Build'
+
+# This workflow builds and publishes release packages for all supported platforms
+# when a new version tag is pushed to the repository.
+
+on:
+  # Trigger on version tags (e.g., v1.8, 1.8.0, v1.8-beta1)
+  push:
+    tags:
+      - 'v*'
+      - '[0-9]+.[0-9]+*'
+  # Allow manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for release (e.g., v1.8.1)'
+        required: true
+
+jobs:
+  build-and-release:
+    name: Build ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          # Windows x86_64 build
+          - {
+              name: 'Windows x86_64',
+              os: windows-latest,
+              cc: 'x86_64-w64-mingw32-gcc',
+              cxx: 'x86_64-w64-mingw32-g++',
+              ar: 'x86_64-w64-mingw32-ar',
+              windres: 'x86_64-w64-mingw32-windres',
+              arch: 'x86_64',
+              build_type: 'Release',
+              cmake_extra_flags: '-G "MinGW Makefiles"'
+            }
+          # macOS x86_64 build (Intel)
+          - {
+              name: 'macOS x86_64',
+              os: macos-13,
+              cc: 'clang',
+              cxx: 'clang++',
+              arch: 'x86_64',
+              build_type: 'Release',
+              cmake_extra_flags: ''
+            }
+          # macOS arm64 build (Apple Silicon)
+          - {
+              name: 'macOS arm64',
+              os: macos-latest,
+              cc: 'clang',
+              cxx: 'clang++',
+              arch: 'arm64',
+              build_type: 'Release',
+              cmake_extra_flags: '-DCMAKE_OSX_ARCHITECTURES=arm64'
+            }
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            sudo apt-get update
+            sudo apt-get install libasound2-dev libudev-dev libhamlib-dev gpsd libavahi-client-dev
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            brew install cmake portaudio hamlib gpsd hidapi
+          elif [ "$RUNNER_OS" == "Windows" ]; then
+            echo "C:\msys64\mingw64\bin" >> $GITHUB_PATH
+          fi
+
+      - name: Create build directory
+        run: cmake -E make_directory ${{github.workspace}}/build
+
+      - name: Configure CMake
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            export CC=${{ matrix.config.cc }}
+            export CXX=${{ matrix.config.cxx }}
+            export AR=${{ matrix.config.ar }}
+            export WINDRES=${{ matrix.config.windres }}
+          fi
+          cmake $GITHUB_WORKSPACE \
+            -DCMAKE_BUILD_TYPE=${{ matrix.config.build_type }} \
+            -DCMAKE_C_COMPILER=${{ matrix.config.cc }} \
+            -DCMAKE_CXX_COMPILER=${{ matrix.config.cxx }} \
+            -DUNITTEST=0 \
+            ${{ matrix.config.cmake_extra_flags }}
+
+      - name: Build
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            export CC=${{ matrix.config.cc }}
+            export CXX=${{ matrix.config.cxx }}
+            export AR=${{ matrix.config.ar }}
+            export WINDRES=${{ matrix.config.windres }}
+          fi
+          cmake --build . --config ${{ matrix.config.build_type }} -j4
+
+      - name: Run tests
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        run: |
+          # Note: Tests are disabled in release builds (UNITTEST=0)
+          # but we can still run basic validation
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./src/direwolf.exe -v || true
+          else
+            ./src/direwolf -v || true
+          fi
+
+      - name: Create package
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ] || [ "$RUNNER_OS" == "macOS" ]; then
+            make package
+          fi
+
+      - name: List generated files
+        shell: bash
+        working-directory: ${{github.workspace}}/build
+        run: |
+          echo "Generated files:"
+          ls -lh direwolf-*.zip || echo "No zip files found"
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use tag name from the trigger, or from manual input
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
+          files: |
+            ${{github.workspace}}/build/direwolf-*.zip
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') || contains(github.ref_name, 'rc') || contains(github.event.inputs.tag_name, 'beta') || contains(github.event.inputs.tag_name, 'alpha') || contains(github.event.inputs.tag_name, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Archive build artifacts (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: direwolf-${{ matrix.config.os }}-${{ matrix.config.arch }}
+          path: |
+            ${{github.workspace}}/build/direwolf-*.zip
+          retention-days: 30

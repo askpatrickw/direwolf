@@ -190,6 +190,14 @@ Results will vary depending on your hardware platform and operating system versi
     sudo yum list direwolf
     sudo yum install direwolf
 
+### Macintosh macOS - Pre-built Binaries
+
+Go to the [**releases** page](https://github.com/wb2osz/direwolf/releases). Download the appropriate zip file for your Mac:
+- **direwolf-*_arm64.zip** for Apple Silicon Macs (M1, M2, M3, etc.)
+- **direwolf-*_x86_64.zip** for Intel Macs
+
+Unzip the file and follow the included instructions.
+
 ### Macintosh macOS - Using Homebrew
 
 The following instructions have been verified on macOS Ventura 13.6 (M2) and macOS High Sierra 10.13.6 (Intel).
